@@ -1,1 +1,0 @@
-# Nexa-ai-trading-signals-
