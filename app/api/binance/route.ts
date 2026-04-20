@@ -1,108 +1,408 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { NextResponse } from "next/server";
 
-// ═══════════════════════════════════════════════════════
-//  CONFIGURATION
-// ═══════════════════════════════════════════════════════
+// ===== أنواع البيانات =====
+interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+interface SMCAnalysis {
+  symbol: string;
+  direction: "BUY" | "SELL" | "NEUTRAL";
+  strength: "STRONG" | "MEDIUM" | "WEAK";
+  entry: number;
+  sl: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  rr: string;
+  concepts: {
+    orderBlock: OrderBlock | null;
+    fairValueGap: FVG | null;
+    marketStructure: string;
+    liquidity: Liquidity | null;
+    bos: boolean;
+    choch: boolean;
+    imbalance: boolean;
+  };
+  score: number;
+  timestamp: string;
+}
+
+interface OrderBlock {
+  type: "BULLISH" | "BEARISH";
+  high: number;
+  low: number;
+  index: number;
+  strength: number;
+}
+
+interface FVG {
+  type: "BULLISH" | "BEARISH";
+  top: number;
+  bottom: number;
+  size: number;
+}
+
+interface Liquidity {
+  type: "BSL" | "SSL";
+  level: number;
+  swept: boolean;
+}
+
+// ===== جلب البيانات من Binance =====
+const getCandles = async (
+  symbol: string,
+  interval: string,
+  limit = 200
+): Promise<Candle[]> => {
+  const res = await fetch(
+    `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
+    { cache: "no-store" }
+  );
+  const data = await res.json();
+  return data.map((c: any) => ({
+    time: c[0],
+    open: parseFloat(c[1]),
+    high: parseFloat(c[2]),
+    low: parseFloat(c[3]),
+    close: parseFloat(c[4]),
+    volume: parseFloat(c[5]),
+  }));
+};
+
+// ===== 1. Market Structure =====
+const analyzeMarketStructure = (candles: Candle[]) => {
+  const highs = candles.map(c => c.high);
+  const lows = candles.map(c => c.low);
+  const len = candles.length;
+
+  const hh = highs[len-1] > highs[len-10]; // Higher High
+  const hl = lows[len-1] > lows[len-10];   // Higher Low
+  const lh = highs[len-1] < highs[len-10]; // Lower High
+  const ll = lows[len-1] < lows[len-10];   // Lower Low
+
+  if (hh && hl) return "BULLISH";
+  if (lh && ll) return "BEARISH";
+  return "RANGING";
+};
+
+// ===== 2. Break of Structure (BOS) =====
+const detectBOS = (candles: Candle[]): boolean => {
+  const len = candles.length;
+  const prevHigh = Math.max(...candles.slice(len-20, len-5).map(c => c.high));
+  const prevLow = Math.min(...candles.slice(len-20, len-5).map(c => c.low));
+  const lastClose = candles[len-1].close;
+
+  return lastClose > prevHigh || lastClose < prevLow;
+};
+
+// ===== 3. Change of Character (CHoCH) =====
+const detectCHoCH = (candles: Candle[]): boolean => {
+  const len = candles.length;
+  const recentHighs = candles.slice(len-10).map(c => c.high);
+  const recentLows = candles.slice(len-10).map(c => c.low);
+
+  const wasUptrend =
+    recentHighs[5] > recentHighs[0] && recentLows[5] > recentLows[0];
+  const nowDowntrend =
+    recentHighs[9] < recentHighs[5] && recentLows[9] < recentLows[5];
+
+  const wasDowntrend =
+    recentHighs[5] < recentHighs[0] && recentLows[5] < recentLows[0];
+  const nowUptrend =
+    recentHighs[9] > recentHighs[5] && recentLows[9] > recentLows[5];
+
+  return (wasUptrend && nowDowntrend) || (wasDowntrend && nowUptrend);
+};
+
+// ===== 4. Order Blocks =====
+const findOrderBlocks = (candles: Candle[]): OrderBlock | null => {
+  const len = candles.length;
+  let strongestOB: OrderBlock | null = null;
+  let maxStrength = 0;
+
+  for (let i = len - 30; i < len - 5; i++) {
+    const candle = candles[i];
+    const nextCandles = candles.slice(i + 1, i + 6);
+
+    // Bullish OB: شمعة هابطة قبل حركة صاعدة قوية
+    const isBearishCandle = candle.close < candle.open;
+    const strongBullishMove = nextCandles.some(
+      c => c.close > candle.high * 1.002
+    );
+
+    if (isBearishCandle && strongBullishMove) {
+      const strength = nextCandles.reduce(
+        (acc, c) => acc + (c.close - c.open), 0
+      );
+      if (strength > maxStrength) {
+        maxStrength = strength;
+        strongestOB = {
+          type: "BULLISH",
+          high: candle.high,
+          low: candle.low,
+          index: i,
+          strength,
+        };
+      }
+    }
+
+    // Bearish OB: شمعة صاعدة قبل حركة هابطة قوية
+    const isBullishCandle = candle.close > candle.open;
+    const strongBearishMove = nextCandles.some(
+      c => c.close < candle.low * 0.998
+    );
+
+    if (isBullishCandle && strongBearishMove) {
+      const strength = nextCandles.reduce(
+        (acc, c) => acc + (c.open - c.close), 0
+      );
+      if (strength > maxStrength) {
+        maxStrength = strength;
+        strongestOB = {
+          type: "BEARISH",
+          high: candle.high,
+          low: candle.low,
+          index: i,
+          strength,
+        };
+      }
+    }
+  }
+
+  return strongestOB;
+};
+
+// ===== 5. Fair Value Gap (FVG) =====
+const findFVG = (candles: Candle[]): FVG | null => {
+  const len = candles.length;
+
+  for (let i = len - 20; i < len - 2; i++) {
+    const prev = candles[i];
+    const curr = candles[i + 1];
+    const next = candles[i + 2];
+
+    // Bullish FVG
+    if (next.low > prev.high) {
+      return {
+        type: "BULLISH",
+        top: next.low,
+        bottom: prev.high,
+        size: next.low - prev.high,
+      };
+    }
+
+    // Bearish FVG
+    if (next.high < prev.low) {
+      return {
+        type: "BEARISH",
+        top: prev.low,
+        bottom: next.high,
+        size: prev.low - next.high,
+      };
+    }
+  }
+
+  return null;
+};
+
+// ===== 6. Liquidity Sweep =====
+const detectLiquidity = (candles: Candle[]): Liquidity | null => {
+  const len = candles.length;
+  const lookback = candles.slice(len - 50, len - 5);
+
+  // Buy Side Liquidity (BSL) - قمم سابقة
+  const swingHighs = lookback
+    .filter((_, i) =>
+      i > 0 &&
+      i < lookback.length - 1 &&
+      lookback[i].high > lookback[i-1].high &&
+      lookback[i].high > lookback[i+1].high
+    )
+    .map(c => c.high);
+
+  // Sell Side Liquidity (SSL) - قيعان سابقة
+  const swingLows = lookback
+    .filter((_, i) =>
+      i > 0 &&
+      i < lookback.length - 1 &&
+      lookback[i].low < lookback[i-1].low &&
+      lookback[i].low < lookback[i+1].low
+    )
+    .map(c => c.low);
+
+  const lastCandle = candles[len - 1];
+
+  // اختراق BSL
+  if (swingHighs.length > 0) {
+    const nearestBSL = Math.min(...swingHighs);
+    if (lastCandle.high > nearestBSL && lastCandle.close < nearestBSL) {
+      return { type: "BSL", level: nearestBSL, swept: true };
+    }
+  }
+
+  // اختراق SSL
+  if (swingLows.length > 0) {
+    const nearestSSL = Math.max(...swingLows);
+    if (lastCandle.low < nearestSSL && lastCandle.close > nearestSSL) {
+      return { type: "SSL", level: nearestSSL, swept: true };
+    }
+  }
+
+  return null;
+};
+
+// ===== 7. Imbalance =====
+const detectImbalance = (candles: Candle[]): boolean => {
+  const len = candles.length;
+  const lastThree = candles.slice(len - 3);
+  const bodySize = Math.abs(lastThree[1].close - lastThree[1].open);
+  const avgBody = candles.slice(len - 20)
+    .reduce((acc, c) => acc + Math.abs(c.close - c.open), 0) / 20;
+
+  return bodySize > avgBody * 2.5;
+};
+
+// ===== 8. ATR للـ SL/TP =====
+const calculateATR = (candles: Candle[], period = 14): number => {
+  const trs = candles.slice(-period).map(c => c.high - c.low);
+  return trs.reduce((a, b) => a + b, 0) / period;
+};
+
+// ===== التحليل الكامل =====
+const analyzeSMC = async (symbol: string): Promise<SMCAnalysis> => {
+  // جلب تايم فريمات متعددة
+  const [h4Candles, h1Candles, m15Candles] = await Promise.all([
+    getCandles(symbol, "4h", 200),
+    getCandles(symbol, "1h", 200),
+    getCandles(symbol, "15m", 200),
+  ]);
+
+  const price = h1Candles[h1Candles.length - 1].close;
+  const atr = calculateATR(h1Candles);
+
+  // تحليل كل المفاهيم
+  const marketStructure = analyzeMarketStructure(h4Candles);
+  const bos = detectBOS(h1Candles);
+  const choch = detectCHoCH(h1Candles);
+  const orderBlock = findOrderBlocks(h1Candles);
+  const fvg = findFVG(m15Candles);
+  const liquidity = detectLiquidity(h4Candles);
+  const imbalance = detectImbalance(h1Candles);
+
+  // نظام النقاط
+  let score = 0;
+  let bullishPoints = 0;
+  let bearishPoints = 0;
+
+  if (marketStructure === "BULLISH") bullishPoints += 30;
+  if (marketStructure === "BEARISH") bearishPoints += 30;
+  if (bos) score += 20;
+  if (choch) score += 25;
+  if (orderBlock?.type === "BULLISH") bullishPoints += 20;
+  if (orderBlock?.type === "BEARISH") bearishPoints += 20;
+  if (fvg?.type === "BULLISH") bullishPoints += 15;
+  if (fvg?.type === "BEARISH") bearishPoints += 15;
+  if (liquidity?.type === "SSL") bullishPoints += 25;
+  if (liquidity?.type === "BSL") bearishPoints += 25;
+  if (imbalance) score += 10;
+
+  // تحديد الاتجاه
+  let direction: "BUY" | "SELL" | "NEUTRAL" = "NEUTRAL";
+  let strength: "STRONG" | "MEDIUM" | "WEAK" = "WEAK";
+  let totalScore = 0;
+
+  if (bullishPoints > bearishPoints + 20) {
+    direction = "BUY";
+    totalScore = bullishPoints + score;
+  } else if (bearishPoints > bullishPoints + 20) {
+    direction = "SELL";
+    totalScore = bearishPoints + score;
+  }
+
+  if (totalScore >= 80) strength = "STRONG";
+  else if (totalScore >= 50) strength = "MEDIUM";
+  else strength = "WEAK";
+
+  // حساب SL/TP
+  const sl = direction === "BUY"
+    ? +(price - atr * 1.5).toFixed(4)
+    : +(price + atr * 1.5).toFixed(4);
+
+  const tp1 = direction === "BUY"
+    ? +(price + atr * 1.5).toFixed(4)
+    : +(price - atr * 1.5).toFixed(4);
+
+  const tp2 = direction === "BUY"
+    ? +(price + atr * 3).toFixed(4)
+    : +(price - atr * 3).toFixed(4);
+
+  const tp3 = direction === "BUY"
+    ? +(price + atr * 5).toFixed(4)
+    : +(price - atr * 5).toFixed(4);
+
+  const riskReward = (Math.abs(tp2 - price) / Math.abs(price - sl)).toFixed(1);
+
+  return {
+    symbol,
+    direction,
+    strength,
+    entry: price,
+    sl,
+    tp1,
+    tp2,
+    tp3,
+    rr: `1:${riskReward}`,
+    concepts: {
+      orderBlock,
+      fairValueGap: fvg,
+      marketStructure,
+      liquidity,
+      bos,
+      choch,
+      imbalance,
+    },
+    score: totalScore,
+    timestamp: new Date().toISOString(),
+  };
+};
+
+// ===== API Route =====
 const PAIRS = [
-  { s: "BTCUSDT",  n: "Bitcoin",   t: "BTC",  c: "#f7931a", cat: "MAJOR" },
-  { s: "ETHUSDT",  n: "Ethereum",  t: "ETH",  c: "#627eea", cat: "MAJOR" },
-  { s: "SOLUSDT",  n: "Solana",    t: "SOL",  c: "#9945ff", cat: "ALT"   },
-  { s: "BNBUSDT",  n: "BNB",       t: "BNB",  c: "#f0b90b", cat: "MAJOR" },
-  { s: "XRPUSDT",  n: "XRP",       t: "XRP",  c: "#00aae4", cat: "ALT"   },
-  { s: "ADAUSDT",  n: "Cardano",   t: "ADA",  c: "#3cc8c8", cat: "ALT"   },
-  { s: "DOGEUSDT", n: "Dogecoin",  t: "DOGE", c: "#c2a633", cat: "MEME"  },
-  { s: "AVAXUSDT", n: "Avalanche", t: "AVAX", c: "#e84142", cat: "ALT"   },
-  { s: "LINKUSDT", n: "Chainlink", t: "LINK", c: "#2a5ada", cat: "ALT"   },
-  { s: "MATICUSDT",n: "Polygon",   t: "MATIC",c: "#8247e5", cat: "ALT"   },
+  "BTCUSDT", "ETHUSDT", "BNBUSDT",
+  "SOLUSDT", "XRPUSDT", "ADAUSDT",
+  "DOGEUSDT", "AVAXUSDT"
 ];
 
-// ═══════════════════════════════════════════════════════
-//  MATH / DSP UTILITIES
-// ═══════════════════════════════════════════════════════
-const pc = (arr) => arr.map((c) => ({...c}));
+export async function GET() {
+  try {
+    const analyses = await Promise.all(
+      PAIRS.map(symbol => analyzeSMC(symbol))
+    );
 
-const ema = (data, p) => {
-  const k = 2 / (p + 1);
-  let v = data[0];
-  return data.map(d => (v = d * k + v * (1 - k)));
-};
+    const signals = analyses
+      .filter(a => a.direction !== "NEUTRAL" && a.strength !== "WEAK")
+      .sort((a, b) => b.score - a.score);
 
-const sma = (data, p) =>
-  data.map((_, i) => i < p - 1 ? null : data.slice(i - p + 1, i + 1).reduce((a, b) => a + b, 0) / p);
+    return NextResponse.json({
+      success: true,
+      signals,
+      total: signals.length,
+      timestamp: new Date().toISOString()
+    });
 
-const stdDev = (data) => {
-  const m = data.reduce((a, b) => a + b, 0) / data.length;
-  return Math.sqrt(data.reduce((a, b) => a + (b - m) ** 2, 0) / data.length);
-};
-
-// Wilder RSI (true formula)
-const wilderRSI = (closes, p = 14) => {
-  if (closes.length < p + 1) return 50;
-  let ag = 0, al = 0;
-  for (let i = 1; i <= p; i++) {
-    const d = closes[i] - closes[i - 1];
-    d > 0 ? (ag += d) : (al -= d);
+  } catch (error: any) {
+    return NextResponse.json(
+      { success: false, error: error.message },
+      { status: 500 }
+    );
   }
-  ag /= p; al /= p;
-  for (let i = p + 1; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1];
-    ag = (ag * (p - 1) + Math.max(d, 0)) / p;
-    al = (al * (p - 1) + Math.max(-d, 0)) / p;
-  }
-  return al === 0 ? 100 : 100 - 100 / (1 + ag / al);
-};
-
-// True MACD
-const calcMACD = (closes, fast = 12, slow = 26, sig = 9) => {
-  const e12 = ema(closes, fast);
-  const e26 = ema(closes, slow);
-  const macdLine = e12.map((v, i) => v - e26[i]);
-  const signalLine = ema(macdLine, sig);
-  const hist = macdLine.map((v, i) => v - signalLine[i]);
-  const n = closes.length - 1;
-  return { macd: macdLine[n], signal: signalLine[n], hist: hist[n], histPrev: hist[n-1], trend: hist[n] > hist[n-1] ? "UP" : "DOWN" };
-};
-
-// Bollinger Bands + %B + Bandwidth
-const calcBB = (closes, p = 20, mult = 2) => {
-  const sl = closes.slice(-p);
-  const mid = sl.reduce((a, b) => a + b, 0) / p;
-  const sd = stdDev(sl);
-  const upper = mid + mult * sd;
-  const lower = mid - mult * sd;
-  const price = closes[closes.length - 1];
-  const pctB = (price - lower) / (upper - lower);
-  const bw = (upper - lower) / mid;
-  return { upper, mid, lower, pctB, bw };
-};
-
-// ATR with Wilder smoothing
-const calcATR = (candles, p = 14) => {
-  const trs = candles.map((c, i) => {
-    if (i === 0) return c.h - c.l;
-    const prev = candles[i - 1];
-    return Math.max(c.h - c.l, Math.abs(c.h - prev.c), Math.abs(c.l - prev.c));
-  });
-  let atr = trs.slice(0, p).reduce((a, b) => a + b, 0) / p;
-  for (let i = p; i < trs.length; i++) atr = (atr * (p - 1) + trs[i]) / p;
-  return atr;
-};
-
-// Stochastic RSI
-const stochRSI = (closes, rsiP = 14, stochP = 14) => {
-  const rsiVals = [];
-  for (let i = rsiP; i < closes.length; i++) rsiVals.push(wilderRSI(closes.slice(0, i + 1), rsiP));
-  if (rsiVals.length < stochP) return { k: 50, d: 50 };
-  const slice = rsiVals.slice(-stochP);
-  const minR = Math.min(...slice), maxR = Math.max(...slice);
-  const k = maxR === minR ? 50 : ((rsiVals[rsiVals.length - 1] - minR) / (maxR - minR)) * 100;
-  const d = rsiVals.slice(-3).reduce((a, b) => a + b, 0) / 3;
-  return { k, d };
-};
-
-// Williams %R
-const williamsR = (candles, p = 14) => {
-  const sl = candles.slice(-p);
+}  const sl = candles.slice(-p);
   const hh = Math.max(...sl.map(c => c.h));
   const ll = Math.min(...sl.map(c => c.l));
   return ((hh - candles[candles.length - 1].c) / (hh - ll)) * -100;
