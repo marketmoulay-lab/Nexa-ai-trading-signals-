@@ -1,3 +1,194 @@
+import { NextResponse } from "next/server";
+import {
+  fetchCandles,
+  fetchBatch,
+  prefetch,
+  invalidateCache,
+  getCacheStats,
+  metrics as fetchMetrics,
+} from "./fetcher";
+
+// ═══════════════════════════════════════════════════════
+//  TYPES  (Candle is imported from ./fetcher)
+// ═══════════════════════════════════════════════════════
+interface SwingPoint { i: number; p: number; }
+interface OrderBlock {
+  type: "BULLISH" | "BEARISH"; h: number; l: number;
+  mid: number; strength: number; mitigated: boolean; vol: number;
+}
+interface FVG {
+  type: "BULLISH" | "BEARISH"; top: number;
+  bot: number; mid: number; size: number;
+}
+interface LiquidityResult {
+  bsl: number[]; ssl: number[];
+  swept: { type: "BSL" | "SSL"; level: number }[];
+}
+interface MACDResult {
+  macd: number; signal: number;
+  hist: number; histPrev: number;
+  trend: "UP" | "DOWN";
+}
+interface BBResult {
+  upper: number; mid: number; lower: number;
+  pctB: number; bw: number;
+}
+interface StochResult { k: number; d: number; }
+interface IchimokuResult {
+  tenkan: number; kijun: number;
+  aboveCloud: boolean; belowCloud: boolean;
+  bias: "BULLISH" | "BEARISH" | "NEUTRAL";
+}
+interface MSResult {
+  trend: "BULLISH" | "BEARISH" | "RANGING";
+  bias: number;
+}
+interface VolDelta {
+  buy: number; sell: number;
+  ratio: number; delta: number;
+}
+interface ScoringResult {
+  direction: "BUY" | "SELL" | "NEUTRAL";
+  bull: number; bear: number;
+  raw: number; pct: number;
+  strength: "STRONG" | "MEDIUM" | "WEAK";
+}
+interface SignalResult {
+  symbol: string; price: number;
+  change24: number; high24: number;
+  low24: number; vol24: number;
+  atr: number; rsi: number; rsiD: number;
+  macd: MACDResult; bb: BBResult;
+  stoch: StochResult; willR: number;
+  ichimoku: IchimokuResult;
+  volDelta: VolDelta;
+  weeklyMS: MSResult; dailyMS: MSResult; ms: MSResult;
+  bos: { type: string; level: number; idx: number } | null;
+  choch: string | null;
+  obs: OrderBlock[]; fvgs: FVG[];
+  liq: LiquidityResult;
+  premDisc: string;
+  instCandle: boolean;
+  engulf: string | null;
+  scoring: ScoringResult;
+  direction: string; strength: string; pct: number;
+  sl: number; slPct: string;
+  tp1: number; tp2: number; tp3: number; tp4: number;
+  rr2: string; rr3: string;
+  confidence: number; tfAgree: number;
+  spark: number[];
+  timestamp: string;
+}
+
+// ═══════════════════════════════════════════════════════
+//  MATH UTILITIES
+// ═══════════════════════════════════════════════════════
+const ema = (data: number[], p: number): number[] => {
+  const k = 2 / (p + 1);
+  let v = data[0];
+  return data.map((d) => (v = d * k + v * (1 - k)));
+};
+
+const stdDev = (data: number[]): number => {
+  const m = data.reduce((a, b) => a + b, 0) / data.length;
+  return Math.sqrt(
+    data.reduce((a, b) => a + (b - m) ** 2, 0) / data.length
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+//  INDICATORS
+// ═══════════════════════════════════════════════════════
+
+// Wilder Smoothed RSI
+const wilderRSI = (closes: number[], p = 14): number => {
+  if (closes.length < p + 1) return 50;
+  let ag = 0, al = 0;
+  for (let i = 1; i <= p; i++) {
+    const d = closes[i] - closes[i - 1];
+    d > 0 ? (ag += d) : (al -= d);
+  }
+  ag /= p; al /= p;
+  for (let i = p + 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    ag = (ag * (p - 1) + Math.max(d, 0)) / p;
+    al = (al * (p - 1) + Math.max(-d, 0)) / p;
+  }
+  return al === 0 ? 100 : 100 - 100 / (1 + ag / al);
+};
+
+// True MACD
+const calcMACD = (
+  closes: number[],
+  fast = 12, slow = 26, sig = 9
+): MACDResult => {
+  const e12 = ema(closes, fast);
+  const e26 = ema(closes, slow);
+  const macdLine = e12.map((v, i) => v - e26[i]);
+  const signalLine = ema(macdLine, sig);
+  const hist = macdLine.map((v, i) => v - signalLine[i]);
+  const n = closes.length - 1;
+  return {
+    macd: macdLine[n],
+    signal: signalLine[n],
+    hist: hist[n],
+    histPrev: hist[n - 1],
+    trend: hist[n] > hist[n - 1] ? "UP" : "DOWN",
+  };
+};
+
+// Bollinger Bands
+const calcBB = (closes: number[], p = 20, mult = 2): BBResult => {
+  const sl = closes.slice(-p);
+  const mid = sl.reduce((a, b) => a + b, 0) / p;
+  const sd = stdDev(sl);
+  const upper = mid + mult * sd;
+  const lower = mid - mult * sd;
+  const price = closes[closes.length - 1];
+  return {
+    upper, mid, lower,
+    pctB: (price - lower) / (upper - lower),
+    bw: (upper - lower) / mid,
+  };
+};
+
+// True ATR (Wilder smoothed)
+const calcATR = (candles: Candle[], p = 14): number => {
+  const trs = candles.map((c, i) => {
+    if (i === 0) return c.h - c.l;
+    const prev = candles[i - 1];
+    return Math.max(
+      c.h - c.l,
+      Math.abs(c.h - prev.c),
+      Math.abs(c.l - prev.c)
+    );
+  });
+  let atr = trs.slice(0, p).reduce((a, b) => a + b, 0) / p;
+  for (let i = p; i < trs.length; i++)
+    atr = (atr * (p - 1) + trs[i]) / p;
+  return atr;
+};
+
+// Stochastic RSI
+const stochRSI = (
+  closes: number[], rsiP = 14, stochP = 14
+): StochResult => {
+  const rsiVals: number[] = [];
+  for (let i = rsiP; i < closes.length; i++)
+    rsiVals.push(wilderRSI(closes.slice(0, i + 1), rsiP));
+  if (rsiVals.length < stochP) return { k: 50, d: 50 };
+  const slice = rsiVals.slice(-stochP);
+  const minR = Math.min(...slice), maxR = Math.max(...slice);
+  const k = maxR === minR
+    ? 50
+    : ((rsiVals[rsiVals.length - 1] - minR) / (maxR - minR)) * 100;
+  const d = rsiVals.slice(-3).reduce((a, b) => a + b, 0) / 3;
+  return { k, d };
+};
+
+// Williams %R
+const williamsR = (candles: Candle[], p = 14): number => {
+  const sl = candles.slice(-p);
   const hh = Math.max(...sl.map((c) => c.h));
   const ll = Math.min(...sl.map((c) => c.l));
   return ((hh - candles[candles.length - 1].c) / (hh - ll)) * -100;
@@ -13,6 +204,7 @@ const calcIchimoku = (candles: Candle[]): IchimokuResult => {
         Math.min(...sl.map((c) => c.l))) / 2
     );
   };
+  const tenkan = midpoint(9);
   const kijun = midpoint(26);
   const price = candles[n - 1].c;
   const aboveCloud = price > Math.max(tenkan, kijun);
@@ -195,23 +387,7 @@ const detectEngulf = (candles: Candle[]): string | null => {
   if (bull) return "BULLISH";
   if (bear) return "BEARISH";
   return null;
-// تأكد من إضافة هذا التحقق قبل العملية الحسابية
-if (!candles || candles.length < 2) {
-  console.error("Not enough data to calculate signals");
-  return new Response(JSON.stringify({ error: "Insufficient data" }), { status: 400 });
-}
-
-// العملية الحسابية المحمية
-const hh = Math.max(...candles.map(c => c.h));
-const ll = Math.min(...candles.map(c => c.l));
-const lastCandle = candles[candles.length - 1];
-
-// حساب آمن لتجنب القسمة على صفر أو أخطاء البيانات الفارغة
-const signalValue = (hh !== ll) 
-  ? ((hh - lastCandle.c) / (hh - ll)) * 100 
-  : 0;
-
-return signalValue;
+};
 
 // ═══════════════════════════════════════════════════════
 //  SCORING ENGINE (160pt max)
@@ -299,13 +475,28 @@ const scoreAll = (data: {
 //  FULL ANALYSIS PER SYMBOL
 // ═══════════════════════════════════════════════════════
 async function analyze(symbol: string): Promise<SignalResult> {
-  const [w1, d1, h4, h1, m15] = await Promise.all([
-    fetchCandles(symbol, "1w", 52),
-    fetchCandles(symbol, "1d", 90),
-    fetchCandles(symbol, "4h", 200),
-    fetchCandles(symbol, "1h", 200),
-    fetchCandles(symbol, "15m", 150),
+  // Fetch all timeframes in one optimized batch (concurrency-controlled, cached)
+  const batch = await fetchBatch([
+    { symbol, interval: "1w", limit: 52  },
+    { symbol, interval: "1d", limit: 90  },
+    { symbol, interval: "4h", limit: 200 },
+    { symbol, interval: "1h", limit: 200 },
+    { symbol, interval: "15m", limit: 150 },
   ]);
+
+  const get = (iv: string, lim: number) => {
+    const key = `${symbol}:${iv}:${lim}`;
+    const data = batch.get(key);
+    if (!data || data.length < 10)
+      throw new Error(`Insufficient data for ${symbol}/${iv}`);
+    return data;
+  };
+
+  const w1  = get("1w",  52);
+  const d1  = get("1d",  90);
+  const h4  = get("4h", 200);
+  const h1  = get("1h", 200);
+  const m15 = get("15m", 150);
 
   const closes = h1.map((c) => c.c);
   const price = closes[closes.length - 1];
@@ -419,11 +610,40 @@ const PAIRS = [
 // ═══════════════════════════════════════════════════════
 //  API HANDLER
 // ═══════════════════════════════════════════════════════
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+
+  // ── /api/signals?action=cache-stats ──────────────────
+  if (searchParams.get("action") === "cache-stats") {
+    return NextResponse.json(getCacheStats());
+  }
+
+  // ── /api/signals?action=invalidate&symbol=BTCUSDT ────
+  if (searchParams.get("action") === "invalidate") {
+    const sym = searchParams.get("symbol") ?? undefined;
+    invalidateCache(sym);
+    return NextResponse.json({ ok: true, invalidated: sym ?? "ALL" });
+  }
+
+  // ── /api/signals?action=prefetch ─────────────────────
+  if (searchParams.get("action") === "prefetch") {
+    await prefetch(PAIRS);
+    return NextResponse.json({ ok: true, warmed: PAIRS.length });
+  }
+
+  // ── Main signal generation ────────────────────────────
   try {
+    // Warm the cache for all pairs before analyzing
+    // (no-op if cache is already hot)
+    await prefetch(PAIRS);
+
     const results = await Promise.allSettled(
       PAIRS.map((symbol) => analyze(symbol))
     );
+
+    const failed = results
+      .filter((r) => r.status === "rejected")
+      .map((r) => (r as PromiseRejectedResult).reason?.message ?? "unknown");
 
     const signals = results
       .filter(
@@ -437,12 +657,21 @@ export async function GET() {
       success: true,
       signals,
       meta: {
-        total: signals.length,
-        buy: signals.filter((s) => s.direction === "BUY").length,
-        sell: signals.filter((s) => s.direction === "SELL").length,
-        strong: signals.filter(
+        total:     signals.length,
+        buy:       signals.filter((s) => s.direction === "BUY").length,
+        sell:      signals.filter((s) => s.direction === "SELL").length,
+        strong:    signals.filter(
           (s) => s.strength === "STRONG" && s.direction !== "NEUTRAL"
         ).length,
+        failed:    failed.length,
+        failedReasons: failed,
+        fetcher:   {
+          cacheHits:    fetchMetrics.hits,
+          cacheMisses:  fetchMetrics.misses,
+          retries:      fetchMetrics.retries,
+          errors:       fetchMetrics.errors,
+          avgLatencyMs: fetchMetrics.avgLatencyMs,
+        },
         timestamp: new Date().toISOString(),
       },
     });
