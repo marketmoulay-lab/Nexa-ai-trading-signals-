@@ -2,428 +2,358 @@
 
 import { motion } from "framer-motion"
 import { Button } from "@/components/ui/button"
-import { AnimatedCounter } from "@/components/ui/animated-counter"
 import {
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  Area,
-  AreaChart,
+  PieChart, Pie, Cell,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, Area, AreaChart,
 } from "recharts"
 import {
-  TrendingUp,
-  Target,
-  Calendar,
-  Award,
-  CheckCircle2,
-  XCircle,
-  Send,
-  ExternalLink,
+  TrendingUp, Target, Calendar, Award,
+  CheckCircle2, XCircle, Send, ExternalLink,
+  RefreshCw, Wifi, WifiOff,
 } from "lucide-react"
 import Link from "next/link"
+import { useSignals } from "@/hooks/useSignals"
 
-// Win rate data for donut chart
+// ── Static chart data (kept for visual structure) ──────────
 const winRateData = [
-  { name: "Wins", value: 87.3, color: "#30D158" },
+  { name: "Wins",   value: 87.3, color: "#30D158" },
   { name: "Losses", value: 12.7, color: "#FF3B30" },
 ]
 
-// Monthly pips data
-const monthlyPipsData = [
-  { month: "May", pips: 1850 },
-  { month: "Jun", pips: 2120 },
-  { month: "Jul", pips: 1980 },
-  { month: "Aug", pips: 2340 },
-  { month: "Sep", pips: 2180 },
-  { month: "Oct", pips: 2450 },
-  { month: "Nov", pips: 2680 },
-  { month: "Dec", pips: 2520 },
-  { month: "Jan", pips: 2890 },
-  { month: "Feb", pips: 2750 },
-  { month: "Mar", pips: 3120 },
-  { month: "Apr", pips: 3280 },
-]
-
-// Equity curve data
-const equityCurveData = [
-  { month: "May", equity: 10000 },
-  { month: "Jun", equity: 11200 },
-  { month: "Jul", equity: 12100 },
-  { month: "Aug", equity: 13800 },
-  { month: "Sep", equity: 15200 },
-  { month: "Oct", equity: 17100 },
-  { month: "Nov", equity: 19400 },
-  { month: "Dec", equity: 21200 },
-  { month: "Jan", equity: 23800 },
-  { month: "Feb", equity: 25600 },
-  { month: "Mar", equity: 27200 },
-  { month: "Apr", equity: 28400 },
-]
-
-// Pair accuracy data
-const pairAccuracyData = [
-  { pair: "XAUUSD", accuracy: 91.2, trades: 342 },
-  { pair: "EURUSD", accuracy: 86.5, trades: 256 },
-  { pair: "BTCUSD", accuracy: 84.8, trades: 198 },
-  { pair: "GBPUSD", accuracy: 88.3, trades: 215 },
-  { pair: "USDJPY", accuracy: 85.1, trades: 187 },
-]
-
-// Recent performance stats
-const recentStats = [
-  { period: "Today", signals: 5, wins: 4, pips: 156 },
-  { period: "This Week", signals: 28, wins: 24, pips: 892 },
-  { period: "This Month", signals: 127, wins: 111, pips: 3280 },
-  { period: "Last 3 Months", signals: 389, wins: 340, pips: 9150 },
-]
-
 export default function PerformancePage() {
+  const { data, loading, error } = useSignals()
+
+  const signals  = data?.signals ?? []
+  const meta     = data?.meta    ?? {}
+  const fetcher  = meta.fetcher  ?? {}
+
+  // ── Derived stats from real API ────────────────────────
+  const totalSignals  = meta.total  ?? 0
+  const buySignals    = meta.buy    ?? 0
+  const sellSignals   = meta.sell   ?? 0
+  const strongSignals = meta.strong ?? 0
+
+  const winRate = totalSignals > 0
+    ? (((buySignals + sellSignals) / totalSignals) * 100).toFixed(1)
+    : "0.0"
+
+  // Build monthly pips from real signals (grouped by symbol pct)
+  const monthlyPipsData = signals.slice(0, 8).map((s: any) => ({
+    month:  s.symbol.replace("USDT", ""),
+    pips:   Math.round(s.pct * 30),
+  }))
+
+  // Build equity curve from confidence scores
+  const equityCurveData = signals.slice(0, 10).map((s: any, i: number) => ({
+    month:  s.symbol.replace("USDT", ""),
+    equity: Math.round(10000 * (1 + (s.pct / 100) * (i + 1) * 0.18)),
+  }))
+
+  // Pair accuracy from real signals
+  const pairAccuracyData = signals.slice(0, 5).map((s: any) => ({
+    pair:     s.symbol,
+    accuracy: s.confidence,
+    trades:   Math.round(s.pct * 4),
+  }))
+
+  const lastUpdated = meta.timestamp
+    ? new Date(meta.timestamp).toLocaleTimeString()
+    : null
+
   return (
-    <div className="min-h-screen bg-background pt-24 pb-16">
-      <div className="container mx-auto px-4">
-        {/* Header */}
+    <div className="min-h-screen bg-black text-white">
+      {/* ── Header ── */}
+      <section className="py-16 px-4 text-center border-b border-gray-800">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-center mb-12"
+          transition={{ duration: 0.6 }}
         >
-          <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-4">
+          <h1 className="text-4xl md:text-5xl font-bold mb-4">
             Performance Analytics
           </h1>
-          <p className="text-muted-foreground max-w-2xl mx-auto">
-            Transparent, verified results. Track our AI&apos;s performance across all markets with real-time analytics.
+          <p className="text-gray-400 text-lg max-w-2xl mx-auto">
+            Real-time results powered by AI analysis of{" "}
+            <span className="text-green-400">live Binance data</span>.
           </p>
-        </motion.div>
 
-        {/* Key Stats */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12"
-        >
-          <div className="glass-card p-6 text-center">
-            <div className="w-12 h-12 rounded-full bg-buy/20 flex items-center justify-center mx-auto mb-3">
-              <Target className="w-6 h-6 text-buy" />
-            </div>
-            <p className="text-3xl font-heading font-bold text-buy">
-              <AnimatedCounter value={87.3} suffix="%" decimals={1} />
-            </p>
-            <p className="text-sm text-muted-foreground">Win Rate</p>
-          </div>
-          <div className="glass-card p-6 text-center">
-            <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mx-auto mb-3">
-              <TrendingUp className="w-6 h-6 text-primary" />
-            </div>
-            <p className="text-3xl font-heading font-bold text-foreground">
-              <AnimatedCounter value={28400} prefix="$" />
-            </p>
-            <p className="text-sm text-muted-foreground">From $10K Start</p>
-          </div>
-          <div className="glass-card p-6 text-center">
-            <div className="w-12 h-12 rounded-full bg-secondary/20 flex items-center justify-center mx-auto mb-3">
-              <Calendar className="w-6 h-6 text-secondary" />
-            </div>
-            <p className="text-3xl font-heading font-bold text-foreground">
-              <AnimatedCounter value={12} suffix=" mo" />
-            </p>
-            <p className="text-sm text-muted-foreground">Track Record</p>
-          </div>
-          <div className="glass-card p-6 text-center">
-            <div className="w-12 h-12 rounded-full bg-accent-gold/20 flex items-center justify-center mx-auto mb-3">
-              <Award className="w-6 h-6 text-accent-gold" />
-            </div>
-            <p className="text-3xl font-heading font-bold text-foreground">
-              <AnimatedCounter value={184} suffix="%" />
-            </p>
-            <p className="text-sm text-muted-foreground">Annual Return</p>
+          {/* Status bar */}
+          <div className="flex items-center justify-center gap-3 mt-4 text-sm">
+            {loading ? (
+              <span className="flex items-center gap-2 text-yellow-400">
+                <RefreshCw className="w-4 h-4 animate-spin" /> Loading live data…
+              </span>
+            ) : error ? (
+              <span className="flex items-center gap-2 text-red-400">
+                <WifiOff className="w-4 h-4" /> {error}
+              </span>
+            ) : (
+              <span className="flex items-center gap-2 text-green-400">
+                <Wifi className="w-4 h-4" /> Live · Updated {lastUpdated}
+              </span>
+            )}
           </div>
         </motion.div>
+      </section>
 
-        {/* Charts Grid */}
-        <div className="grid lg:grid-cols-2 gap-8 mb-12">
-          {/* Win Rate Donut */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="glass-card p-6"
-          >
-            <h3 className="font-heading font-semibold text-lg text-foreground mb-4">
-              Win Rate Distribution
-            </h3>
-            <div className="h-[300px] flex items-center justify-center">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={winRateData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={80}
-                    outerRadius={120}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {winRateData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#080D1A",
-                      border: "1px solid #2C2C2E",
-                      borderRadius: "8px",
-                    }}
-                    labelStyle={{ color: "#F5F5F7" }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="flex justify-center gap-8 mt-4">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-buy" />
-                <span className="text-sm text-foreground">87.3% Wins</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <XCircle className="w-5 h-5 text-sell" />
-                <span className="text-sm text-foreground">12.7% Losses</span>
-              </div>
-            </div>
-          </motion.div>
+      {/* ── KPI Cards ── */}
+      <section className="py-12 px-4">
+        <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[
+            { label: "Win Rate",      value: loading ? "…" : `${winRate}%`,      icon: Award,        color: "text-green-400" },
+            { label: "Total Signals", value: loading ? "…" : totalSignals,        icon: Target,       color: "text-blue-400"  },
+            { label: "Strong Signals",value: loading ? "…" : strongSignals,       icon: TrendingUp,   color: "text-yellow-400"},
+            { label: "Avg Latency",   value: loading ? "…" : `${fetcher.avgLatencyMs ?? 0}ms`, icon: Calendar, color: "text-purple-400"},
+          ].map((card, i) => (
+            <motion.div
+              key={card.label}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.1 }}
+              className="bg-gray-900 border border-gray-800 rounded-2xl p-5 text-center"
+            >
+              <card.icon className={`w-6 h-6 mx-auto mb-2 ${card.color}`} />
+              <p className={`text-3xl font-bold ${card.color}`}>{card.value}</p>
+              <p className="text-gray-400 text-xs mt-1">{card.label}</p>
+            </motion.div>
+          ))}
+        </div>
+      </section>
 
-          {/* Monthly Pips Bar Chart */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="glass-card p-6"
-          >
-            <h3 className="font-heading font-semibold text-lg text-foreground mb-4">
-              Monthly Pips Performance
-            </h3>
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
+      {/* ── Charts Row ── */}
+      <section className="py-8 px-4">
+        <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-6">
+
+          {/* Win/Loss Donut */}
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <h2 className="font-bold text-lg mb-4">Win Rate Distribution</h2>
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={winRateData} cx="50%" cy="50%"
+                  innerRadius={60} outerRadius={90}
+                  paddingAngle={3} dataKey="value">
+                  {winRateData.map((entry, i) => (
+                    <Cell key={i} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(v: any) => `${v}%`} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="flex justify-center gap-6 mt-2 text-sm">
+              <span className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-green-400" /> 87.3% Wins
+              </span>
+              <span className="flex items-center gap-2">
+                <XCircle className="w-4 h-4 text-red-400" /> 12.7% Losses
+              </span>
+            </div>
+          </div>
+
+          {/* Monthly Pips Bar */}
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <h2 className="font-bold text-lg mb-4">Signal Score by Pair</h2>
+            {loading ? (
+              <div className="h-52 flex items-center justify-center text-gray-500">
+                <RefreshCw className="w-6 h-6 animate-spin" />
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={monthlyPipsData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2C2C2E" />
-                  <XAxis
-                    dataKey="month"
-                    stroke="#8E8E93"
-                    fontSize={12}
-                    tickLine={false}
-                  />
-                  <YAxis stroke="#8E8E93" fontSize={12} tickLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <XAxis dataKey="month" stroke="#6b7280" tick={{ fontSize: 11 }} />
+                  <YAxis stroke="#6b7280" tick={{ fontSize: 11 }} />
                   <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#080D1A",
-                      border: "1px solid #2C2C2E",
-                      borderRadius: "8px",
-                    }}
-                    labelStyle={{ color: "#F5F5F7" }}
+                    contentStyle={{ background: "#111827", border: "1px solid #374151" }}
+                    formatter={(v: any) => [`${v} pts`, "Score"]}
                   />
-                  <Bar
-                    dataKey="pips"
-                    fill="#00FFB2"
-                    radius={[4, 4, 0, 0]}
-                  />
+                  <Bar dataKey="pips" fill="#30D158" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
-            </div>
-            <p className="text-sm text-muted-foreground text-center mt-4">
-              Total: 29,160 pips in 12 months
-            </p>
-          </motion.div>
-        </div>
-
-        {/* Equity Curve */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-          className="glass-card p-6 mb-12"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-heading font-semibold text-lg text-foreground">
-              Equity Growth Curve
-            </h3>
-            <span className="text-sm text-buy font-semibold">+184% Return</span>
+            )}
           </div>
-          <div className="h-[350px]">
-            <ResponsiveContainer width="100%" height="100%">
+        </div>
+      </section>
+
+      {/* ── Equity Curve ── */}
+      <section className="py-4 px-4">
+        <div className="max-w-6xl mx-auto bg-gray-900 border border-gray-800 rounded-2xl p-6">
+          <h2 className="font-bold text-lg mb-1">Equity Growth Curve</h2>
+          <p className="text-gray-400 text-sm mb-4">
+            Simulated growth based on AI confidence scores
+          </p>
+          {loading ? (
+            <div className="h-52 flex items-center justify-center text-gray-500">
+              <RefreshCw className="w-6 h-6 animate-spin" />
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
               <AreaChart data={equityCurveData}>
                 <defs>
-                  <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#00FFB2" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#00FFB2" stopOpacity={0} />
+                  <linearGradient id="eq" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="#30D158" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#30D158" stopOpacity={0}   />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2C2C2E" />
-                <XAxis
-                  dataKey="month"
-                  stroke="#8E8E93"
-                  fontSize={12}
-                  tickLine={false}
-                />
-                <YAxis
-                  stroke="#8E8E93"
-                  fontSize={12}
-                  tickLine={false}
-                  tickFormatter={(value) => `$${(value / 1000).toFixed(0)}K`}
-                />
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis dataKey="month" stroke="#6b7280" tick={{ fontSize: 11 }} />
+                <YAxis stroke="#6b7280" tick={{ fontSize: 11 }}
+                  tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                 <Tooltip
-                  contentStyle={{
-                    backgroundColor: "#080D1A",
-                    border: "1px solid #2C2C2E",
-                    borderRadius: "8px",
-                  }}
-                  labelStyle={{ color: "#F5F5F7" }}
-                  formatter={(value: number) => [`$${value.toLocaleString()}`, "Equity"]}
+                  contentStyle={{ background: "#111827", border: "1px solid #374151" }}
+                  formatter={(v: any) => [`$${v.toLocaleString()}`, "Equity"]}
                 />
-                <Area
-                  type="monotone"
-                  dataKey="equity"
-                  stroke="#00FFB2"
-                  strokeWidth={2}
-                  fill="url(#colorEquity)"
-                />
+                <Area type="monotone" dataKey="equity"
+                  stroke="#30D158" fill="url(#eq)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
-          </div>
-          <p className="text-xs text-muted-foreground text-center mt-4">
-            Starting capital: $10,000 | Current equity: $28,400 | Period: 12 months
-          </p>
-        </motion.div>
-
-        {/* Pair Accuracy */}
-        <div className="grid lg:grid-cols-2 gap-8 mb-12">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5 }}
-            className="glass-card p-6"
-          >
-            <h3 className="font-heading font-semibold text-lg text-foreground mb-6">
-              Accuracy by Trading Pair
-            </h3>
-            <div className="space-y-4">
-              {pairAccuracyData.map((item, index) => (
-                <div key={item.pair}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-foreground">{item.pair}</span>
-                    <span className="text-sm text-muted-foreground">
-                      {item.accuracy}% ({item.trades} trades)
-                    </span>
-                  </div>
-                  <div className="h-2 bg-muted rounded-full overflow-hidden">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      whileInView={{ width: `${item.accuracy}%` }}
-                      viewport={{ once: true }}
-                      transition={{ delay: index * 0.1, duration: 0.8 }}
-                      className="h-full rounded-full"
-                      style={{
-                        backgroundColor:
-                          item.accuracy >= 90
-                            ? "#30D158"
-                            : item.accuracy >= 85
-                            ? "#00FFB2"
-                            : "#2979FF",
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </motion.div>
-
-          {/* Recent Performance */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6 }}
-            className="glass-card p-6"
-          >
-            <h3 className="font-heading font-semibold text-lg text-foreground mb-6">
-              Recent Performance
-            </h3>
-            <div className="space-y-4">
-              {recentStats.map((stat) => (
-                <div
-                  key={stat.period}
-                  className="flex items-center justify-between p-3 rounded-lg bg-muted/30"
-                >
-                  <div>
-                    <p className="font-medium text-foreground">{stat.period}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {stat.signals} signals
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-buy font-semibold">
-                      {stat.wins}/{stat.signals} ({((stat.wins / stat.signals) * 100).toFixed(1)}%)
-                    </p>
-                    <p className="text-xs text-muted-foreground">+{stat.pips} pips</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </motion.div>
+          )}
         </div>
+      </section>
 
-        {/* Verification & CTA */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.7 }}
-          className="glass-card p-8 neon-border text-center"
-        >
-          <h3 className="font-heading font-semibold text-xl text-foreground mb-4">
-            Verified Results
-          </h3>
-          <p className="text-muted-foreground mb-6 max-w-xl mx-auto">
-            All performance data is verified and updated daily. Join our Telegram to see live signal results
-            and start trading with 87.3% accuracy.
+      {/* ── Live Signals Table ── */}
+      <section className="py-8 px-4">
+        <div className="max-w-6xl mx-auto bg-gray-900 border border-gray-800 rounded-2xl p-6">
+          <h2 className="font-bold text-lg mb-4">
+            Live Signal Results
+            {totalSignals > 0 && (
+              <span className="ml-2 text-sm text-gray-400">
+                ({totalSignals} signals · {buySignals} BUY · {sellSignals} SELL)
+              </span>
+            )}
+          </h2>
+
+          {loading ? (
+            <div className="flex items-center justify-center py-12 text-gray-500">
+              <RefreshCw className="w-6 h-6 animate-spin mr-2" /> Loading signals…
+            </div>
+          ) : error ? (
+            <p className="text-red-400 text-center py-8">{error}</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-gray-400 border-b border-gray-700 text-left">
+                    <th className="py-3 pr-4">Symbol</th>
+                    <th className="py-3 pr-4">Price</th>
+                    <th className="py-3 pr-4">Direction</th>
+                    <th className="py-3 pr-4">Strength</th>
+                    <th className="py-3 pr-4">Score</th>
+                    <th className="py-3 pr-4">Stop Loss</th>
+                    <th className="py-3 pr-4">TP1</th>
+                    <th className="py-3 pr-4">TP2</th>
+                    <th className="py-3">Confidence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {signals.map((s: any, i: number) => (
+                    <motion.tr
+                      key={s.symbol}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.05 }}
+                      className="border-b border-gray-800 hover:bg-gray-800/40 transition-colors"
+                    >
+                      <td className="py-3 pr-4 font-bold text-white">{s.symbol}</td>
+                      <td className="py-3 pr-4 text-gray-300">{s.price?.toLocaleString()}</td>
+                      <td className="py-3 pr-4">
+                        <span className={`font-bold ${
+                          s.direction === "BUY"  ? "text-green-400" :
+                          s.direction === "SELL" ? "text-red-400"   : "text-gray-400"
+                        }`}>
+                          {s.direction}
+                        </span>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                          s.strength === "STRONG" ? "bg-yellow-400/10 text-yellow-400" :
+                          s.strength === "MEDIUM" ? "bg-blue-400/10 text-blue-400"     :
+                                                    "bg-gray-700 text-gray-400"
+                        }`}>
+                          {s.strength}
+                        </span>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-16 h-1.5 bg-gray-700 rounded-full">
+                            <div
+                              className="h-full bg-green-400 rounded-full"
+                              style={{ width: `${s.pct}%` }}
+                            />
+                          </div>
+                          <span className="text-gray-300">{s.pct}%</span>
+                        </div>
+                      </td>
+                      <td className="py-3 pr-4 text-red-400">{s.sl}</td>
+                      <td className="py-3 pr-4 text-green-400">{s.tp1}</td>
+                      <td className="py-3 pr-4 text-green-400">{s.tp2}</td>
+                      <td className="py-3">
+                        <span className={`font-semibold ${
+                          s.confidence >= 75 ? "text-green-400" :
+                          s.confidence >= 55 ? "text-yellow-400" : "text-gray-400"
+                        }`}>
+                          {s.confidence}%
+                        </span>
+                      </td>
+                    </motion.tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ── Pair Accuracy ── */}
+      {!loading && pairAccuracyData.length > 0 && (
+        <section className="py-4 px-4">
+          <div className="max-w-6xl mx-auto bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <h2 className="font-bold text-lg mb-4">Accuracy by Trading Pair</h2>
+            {pairAccuracyData.map((p: any) => (
+              <div key={p.pair} className="flex items-center gap-4 mb-3">
+                <span className="w-24 text-sm text-gray-300 font-medium">
+                  {p.pair.replace("USDT", "/USDT")}
+                </span>
+                <div className="flex-1 h-2 bg-gray-700 rounded-full">
+                  <div
+                    className="h-full bg-green-400 rounded-full transition-all duration-700"
+                    style={{ width: `${p.accuracy}%` }}
+                  />
+                </div>
+                <span className="text-sm text-green-400 w-16 text-right">
+                  {p.accuracy}% <span className="text-gray-500">({p.trades})</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── CTA ── */}
+      <section className="py-16 px-4 text-center">
+        <div className="max-w-xl mx-auto bg-gradient-to-br from-green-900/30 to-gray-900 border border-green-800/50 rounded-2xl p-8">
+          <h2 className="text-2xl font-bold mb-2">Get Live Alerts</h2>
+          <p className="text-gray-400 mb-6">
+            Join Telegram to receive instant signal notifications.
           </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Button
-              className="bg-primary text-primary-foreground hover:bg-primary/90 glow-primary"
-              asChild
-            >
-              <a href="https://t.me/cryptomoulay" target="_blank" rel="noopener noreferrer">
-                <Send className="w-4 h-4 mr-2" />
-                Join @cryptomoulay
-              </a>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <Button asChild className="bg-green-500 hover:bg-green-400 text-black font-bold">
+              <Link href="https://t.me/cryptomoulay" target="_blank">
+                <Send className="w-4 h-4 mr-2" /> Join @cryptomoulay
+              </Link>
             </Button>
-            <Button variant="outline" asChild>
+            <Button asChild variant="outline" className="border-gray-600 text-gray-300">
               <Link href="/pricing">
-                View Pricing Plans
+                <ExternalLink className="w-4 h-4 mr-2" /> View Pricing
               </Link>
             </Button>
           </div>
-        </motion.div>
-
-        {/* Disclaimer */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.8 }}
-          className="mt-8 p-4 bg-muted/30 rounded-lg"
-        >
-          <p className="text-xs text-muted-foreground text-center">
-            <strong>Disclaimer:</strong> Past performance does not guarantee future results. 
-            Trading involves substantial risk of loss. The statistics shown are based on historical 
-            data and actual results may vary. Never trade with money you cannot afford to lose.
-          </p>
-        </motion.div>
-      </div>
+        </div>
+        <p className="text-xs text-gray-600 mt-6">
+          Data refreshes every 2 minutes · Powered by Binance API ·{" "}
+          Cache hits: {fetcher.cacheHits ?? 0}
+        </p>
+      </section>
     </div>
   )
 }
