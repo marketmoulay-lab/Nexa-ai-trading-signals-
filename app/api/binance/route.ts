@@ -405,7 +405,23 @@ const detectEngulf = (candles: Candle[]): string | null => {
   if (bull) return "BULLISH";
   if (bear) return "BEARISH";
   return null;
-};
+// تأكد من إضافة هذا التحقق قبل العملية الحسابية
+if (!candles || candles.length < 2) {
+  console.error("Not enough data to calculate signals");
+  return new Response(JSON.stringify({ error: "Insufficient data" }), { status: 400 });
+}
+
+// العملية الحسابية المحمية
+const hh = Math.max(...candles.map(c => c.h));
+const ll = Math.min(...candles.map(c => c.l));
+const lastCandle = candles[candles.length - 1];
+
+// حساب آمن لتجنب القسمة على صفر أو أخطاء البيانات الفارغة
+const signalValue = (hh !== ll) 
+  ? ((hh - lastCandle.c) / (hh - ll)) * 100 
+  : 0;
+
+return signalValue;
 
 // ═══════════════════════════════════════════════════════
 //  SCORING ENGINE (160pt max)
