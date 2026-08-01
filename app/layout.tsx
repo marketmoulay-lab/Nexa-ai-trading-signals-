@@ -1,102 +1,144 @@
-import type { Metadata, Viewport } from 'next'
-import { Space_Grotesk, Inter, JetBrains_Mono } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
-import { SpeedInsights } from '@vercel/speed-insights/next'
-import './globals.css'
-import { Navbar } from '@/components/layout/navbar'
-import { Footer } from '@/components/layout/footer'
-import { CookieConsent } from '@/components/layout/cookie-consent'
-import { NexaBot } from '@/components/chatbot/nexa-bot'
+"use client";
 
-const spaceGrotesk = Space_Grotesk({
-  subsets: ['latin'],
-  variable: '--font-space-grotesk',
-  display: 'swap',
-})
+import { useState } from "react";
 
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-  display: 'swap',
-})
+/**
+ * AffiliateSidebar
+ * ديزاين Bloomberg-terminal-style باش يتلائم مع Nexa AI theme
+ * حط هاد الملف فـ components/AffiliateSidebar.tsx
+ * وزيدو فـ app/layout.tsx جنب المحتوى الرئيسي
+ *
+ * ⚠️ بدّل الروابط لي مكتوب عليهم "REPLACE_ME" بالكود ديالك ديال الأفيلييت
+ */
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
-  variable: '--font-jetbrains-mono',
-  display: 'swap',
-})
+type AffiliateLink = {
+  name: string;
+  tag: string; // نوع (Exchange / Prop Firm / Broker)
+  url: string;
+  accent: string; // hex color خاص بكل منصة
+  mono: string; // مونوغرام (2-3 حروف) كأيقونة
+};
 
-export const metadata: Metadata = {
-  metadataBase: new URL('https://moulaytrading.fit'),
-  title: {
-    default: 'NEXA AI | AI-Powered Trading Signals - 87.3% Win Rate',
-    template: '%s | NEXA AI Trading Signals',
+const LINKS: AffiliateLink[] = [
+  {
+    name: "Binance P2P",
+    tag: "Exchange",
+    url: "https://www.binance.com/en/activity/referral-entry/CPA?ref=REPLACE_ME",
+    accent: "#F0B90B",
+    mono: "BN",
   },
-  description: 'Get AI-powered trading signals for Forex, Gold, and Crypto with 87.3% verified win rate. Join 12,000+ traders using NEXA AI for real-time signals with precise entry, TP, and SL levels.',
-  keywords: ['trading signals', 'AI trading', 'forex signals', 'gold trading', 'crypto signals', 'XAUUSD', 'trading bot', 'automated trading'],
-  authors: [{ name: 'NEXA AI' }],
-  creator: 'NEXA AI',
-  publisher: 'NEXA AI',
-  openGraph: {
-    type: 'website',
-    locale: 'en_US',
-    url: 'https://moulaytrading.fit',
-    siteName: 'NEXA AI Trading Signals',
-    title: 'NEXA AI | AI-Powered Trading Signals - 87.3% Win Rate',
-    description: 'Get AI-powered trading signals for Forex, Gold, and Crypto with 87.3% verified win rate. Join 12,000+ traders.',
-    images: [
-      {
-        url: '/og-image.png',
-        width: 1200,
-        height: 630,
-        alt: 'NEXA AI Trading Signals',
-      },
-    ],
+  {
+    name: "Bybit",
+    tag: "Exchange",
+    url: "https://www.bybit.com/invite?ref=157970",
+    accent: "#F7A600",
+    mono: "BY",
   },
-  twitter: {
-    card: 'summary_large_image',
-    title: 'NEXA AI | AI-Powered Trading Signals',
-    description: 'Get AI-powered trading signals with 87.3% verified win rate. Join 12,000+ traders.',
-    images: ['/og-image.png'],
+  {
+    name: "OKX",
+    tag: "Exchange",
+    url: "https://www.okx.com/join/31050757",
+    accent: "#00D4B5",
+    mono: "OK",
   },
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      'max-video-preview': -1,
-      'max-image-preview': 'large',
-      'max-snippet': -1,
-    },
+  {
+    name: "BingX",
+    tag: "Exchange",
+    url: "https://bingx.com/invite/REPLACE_ME",
+    accent: "#1F5CFF",
+    mono: "BX",
   },
-}
+  {
+    name: "KuCoin",
+    tag: "Exchange",
+    url: "https://www.kucoin.com/r/rf/QBSAKVY7",
+    accent: "#24AE8F",
+    mono: "KC",
+  },
+  {
+    name: "XM",
+    tag: "Broker",
+    url: "https://www.xm.com/ref/REPLACE_ME",
+    accent: "#E4002B",
+    mono: "XM",
+  },
+  {
+    name: "PropFirmMatch",
+    tag: "Prop Firm",
+    url: "https://propfirmmatch.com/?a_aid=moulay",
+    accent: "#7C5CFC",
+    mono: "PFM",
+  },
+  {
+    name: "Earn2Trade",
+    tag: "Prop Firm",
+    url: "https://www.earn2trade.com/?a_pid=non&a_bid=8d7b4b9e",
+    accent: "#00C2FF",
+    mono: "E2T",
+  },
+];
 
-export const viewport: Viewport = {
-  themeColor: '#02040F',
-  width: 'device-width',
-  initialScale: 1,
-  maximumScale: 5,
-}
+export default function AffiliateSidebar() {
+  const [collapsed, setCollapsed] = useState(false);
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode
-}>) {
   return (
-    <html lang="en" className={`${spaceGrotesk.variable} ${inter.variable} ${jetbrainsMono.variable} bg-background`}>
-      <body className="font-sans antialiased min-h-screen flex flex-col">
-        <Navbar />
-        <main className="flex-1">
-          {children}
-        </main>
-        <Footer />
-        <NexaBot />
-        <CookieConsent />
-        {process.env.NODE_ENV === 'production' && <Analytics />}
-        {process.env.NODE_ENV === 'production' && <SpeedInsights />}
-      </body>
-    </html>
-  )
+    <aside
+      className={`sticky top-0 h-screen shrink-0 border-l border-neutral-800 bg-[#0A0B0D] transition-all duration-200 ${
+        collapsed ? "w-12" : "w-64"
+      }`}
+    >
+      <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-3">
+        {!collapsed && (
+          <span className="font-mono text-[11px] uppercase tracking-widest text-neutral-500">
+            Partners
+          </span>
+        )}
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="text-neutral-500 hover:text-neutral-200"
+          aria-label={collapsed ? "Expand partners panel" : "Collapse partners panel"}
+        >
+          {collapsed ? "«" : "»"}
+        </button>
+      </div>
+
+      {!collapsed && (
+        <div className="flex flex-col gap-1 p-2">
+          {LINKS.map((link) => (
+            <a
+              key={link.name}
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer sponsored"
+              className="group flex items-center justify-between rounded-md border border-transparent px-3 py-2.5 transition-colors hover:border-neutral-700 hover:bg-neutral-900"
+            >
+              <div className="flex items-center gap-2.5">
+                <span
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-mono text-[10px] font-bold text-black"
+                  style={{ backgroundColor: link.accent }}
+                >
+                  {link.mono}
+                </span>
+                <div className="flex flex-col">
+                  <span className="text-sm font-medium text-neutral-200">
+                    {link.name}
+                  </span>
+                  <span className="font-mono text-[10px] uppercase tracking-wide text-neutral-500">
+                    {link.tag}
+                  </span>
+                </div>
+              </div>
+              <span className="text-neutral-600 transition-transform group-hover:translate-x-0.5 group-hover:text-neutral-300">
+                →
+              </span>
+            </a>
+          ))}
+
+          <p className="mt-2 px-3 text-[10px] leading-relaxed text-neutral-600">
+            روابط برعاية. قد نربح عمولة من التسجيل عبر هاد الروابط دون أي تكلفة إضافية عليك.
+          </p>
+        </div>
+      )}
+    </aside>
+  );
 }
